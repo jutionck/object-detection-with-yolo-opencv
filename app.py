@@ -10,12 +10,14 @@ import base64
 import numpy as np
 from collections import deque
 import sys
+from frontal_detector import FrontalPersonDetector
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'your-secret-key'
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 model = YOLO("yolov8n.pt")
+frontal_detector = FrontalPersonDetector()
 
 class DetectionSystem:
     def __init__(self):
@@ -23,9 +25,11 @@ class DetectionSystem:
         self.cap = None
         self.detection_data = []
         self.person_counts = deque(maxlen=100)
+        self.frontal_person_counts = deque(maxlen=100)
         self.start_time = None
         self.frame_count = 0
         self.total_persons = 0
+        self.total_frontal_persons = 0
         self.current_stats = {}
         
     def initialize_video_source(self, source='sample.mp4'):
@@ -57,8 +61,10 @@ class DetectionSystem:
         self.start_time = time.time()
         self.frame_count = 0
         self.total_persons = 0
+        self.total_frontal_persons = 0
         self.detection_data = []
         self.person_counts = deque(maxlen=100)
+        self.frontal_person_counts = deque(maxlen=100)
         
         thread = threading.Thread(target=self._detection_loop)
         thread.daemon = True
@@ -83,30 +89,46 @@ class DetectionSystem:
             
             frame = cv2.resize(frame, (1280, 720))
             results = model(frame)
-            annotated_frame = results[0].plot()
             
-            people_count = 0
+            # Get frontal person detections
+            frontal_persons, all_persons, frontal_results = frontal_detector.filter_frontal_persons(frame, results)
+            
+            # Create annotated frame with frontal indicators
+            annotated_frame = frontal_detector.annotate_frontal_persons(frame, all_persons, frontal_results)
+            
+            people_count = len(all_persons)
+            frontal_people_count = len(frontal_persons)
+            
             persons_detected = []
+            frontal_persons_detected = []
             
-            for box in results[0].boxes:
-                cls = int(box.cls[0])
-                if cls == 0:
-                    people_count += 1
-                    confidence = float(box.conf[0])
-                    x1, y1, x2, y2 = box.xyxy[0].tolist()
-                    persons_detected.append({
-                        'confidence': confidence,
-                        'bbox': [x1, y1, x2, y2]
-                    })
+            # Process all persons
+            for person in all_persons:
+                persons_detected.append({
+                    'confidence': person['confidence'],
+                    'bbox': person['bbox']
+                })
+            
+            # Process frontal persons
+            for person in frontal_persons:
+                frontal_persons_detected.append({
+                    'confidence': person['confidence'],
+                    'bbox': person['bbox'],
+                    'face_info': person.get('face_info', {})
+                })
             
             self.total_persons += people_count
+            self.total_frontal_persons += frontal_people_count
             self.person_counts.append(people_count)
+            self.frontal_person_counts.append(frontal_people_count)
             
             detection_record = {
                 'timestamp': datetime.now().isoformat(),
                 'frame': self.frame_count,
                 'person_count': people_count,
+                'frontal_person_count': frontal_people_count,
                 'persons': persons_detected,
+                'frontal_persons': frontal_persons_detected,
                 'elapsed_time': current_time - self.start_time
             }
             self.detection_data.append(detection_record)
@@ -114,16 +136,22 @@ class DetectionSystem:
             elapsed_time = current_time - self.start_time
             fps = self.frame_count / elapsed_time if elapsed_time > 0 else 0
             avg_persons = self.total_persons / self.frame_count if self.frame_count > 0 else 0
+            avg_frontal_persons = self.total_frontal_persons / self.frame_count if self.frame_count > 0 else 0
             
             self.current_stats = {
                 'frame_count': self.frame_count,
                 'person_count': people_count,
+                'frontal_person_count': frontal_people_count,
                 'total_persons': self.total_persons,
+                'total_frontal_persons': self.total_frontal_persons,
                 'avg_persons': round(avg_persons, 2),
+                'avg_frontal_persons': round(avg_frontal_persons, 2),
                 'fps': round(fps, 2),
                 'elapsed_time': round(elapsed_time, 2),
                 'max_persons': max(self.person_counts) if self.person_counts else 0,
-                'min_persons': min(self.person_counts) if self.person_counts else 0
+                'min_persons': min(self.person_counts) if self.person_counts else 0,
+                'max_frontal_persons': max(self.frontal_person_counts) if self.frontal_person_counts else 0,
+                'min_frontal_persons': min(self.frontal_person_counts) if self.frontal_person_counts else 0
             }
             
             _, buffer = cv2.imencode('.jpg', annotated_frame)
@@ -150,9 +178,13 @@ class DetectionSystem:
                 'duration_seconds': round(total_duration, 2),
                 'average_fps': round(self.frame_count/total_duration, 2),
                 'total_persons_detected': self.total_persons,
+                'total_frontal_persons_detected': self.total_frontal_persons,
                 'average_persons_per_frame': round(self.total_persons/self.frame_count, 2),
+                'average_frontal_persons_per_frame': round(self.total_frontal_persons/self.frame_count, 2),
                 'max_persons_in_frame': max(self.person_counts) if self.person_counts else 0,
-                'min_persons_in_frame': min(self.person_counts) if self.person_counts else 0
+                'min_persons_in_frame': min(self.person_counts) if self.person_counts else 0,
+                'max_frontal_persons_in_frame': max(self.frontal_person_counts) if self.frontal_person_counts else 0,
+                'min_frontal_persons_in_frame': min(self.frontal_person_counts) if self.frontal_person_counts else 0
             },
             'detailed_data': self.detection_data
         }
