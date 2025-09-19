@@ -17,7 +17,9 @@ app.config['SECRET_KEY'] = 'your-secret-key'
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 model = YOLO("yolov8n.pt")
-frontal_detector = FrontalPersonDetector()
+
+# Initialize with fast mode for web dashboard (webcam focused)
+frontal_detector = FrontalPersonDetector(performance_mode='fast')
 
 class DetectionSystem:
     def __init__(self):
@@ -90,45 +92,45 @@ class DetectionSystem:
             frame = cv2.resize(frame, (1280, 720))
             results = model(frame)
             
-            # Get frontal person detections
+            # Get visible face person detections
             frontal_persons, all_persons, frontal_results = frontal_detector.filter_frontal_persons(frame, results)
             
-            # Create annotated frame with frontal indicators
+            # Create annotated frame with visible face indicators
             annotated_frame = frontal_detector.annotate_frontal_persons(frame, all_persons, frontal_results)
             
             people_count = len(all_persons)
-            frontal_people_count = len(frontal_persons)
+            visible_face_count = len(frontal_persons)
             
             persons_detected = []
-            frontal_persons_detected = []
+            visible_face_persons_detected = []
             
             # Process all persons
             for person in all_persons:
                 persons_detected.append({
-                    'confidence': person['confidence'],
-                    'bbox': person['bbox']
+                    'confidence': float(person['confidence']),
+                    'bbox': [float(x) for x in person['bbox']]
                 })
             
-            # Process frontal persons
+            # Process persons with visible faces
             for person in frontal_persons:
-                frontal_persons_detected.append({
-                    'confidence': person['confidence'],
-                    'bbox': person['bbox'],
+                visible_face_persons_detected.append({
+                    'confidence': float(person['confidence']),
+                    'bbox': [float(x) for x in person['bbox']],
                     'face_info': person.get('face_info', {})
                 })
             
             self.total_persons += people_count
-            self.total_frontal_persons += frontal_people_count
+            self.total_frontal_persons += visible_face_count
             self.person_counts.append(people_count)
-            self.frontal_person_counts.append(frontal_people_count)
+            self.frontal_person_counts.append(visible_face_count)
             
             detection_record = {
                 'timestamp': datetime.now().isoformat(),
                 'frame': self.frame_count,
                 'person_count': people_count,
-                'frontal_person_count': frontal_people_count,
+                'frontal_person_count': visible_face_count,
                 'persons': persons_detected,
-                'frontal_persons': frontal_persons_detected,
+                'frontal_persons': visible_face_persons_detected,
                 'elapsed_time': current_time - self.start_time
             }
             self.detection_data.append(detection_record)
@@ -136,16 +138,16 @@ class DetectionSystem:
             elapsed_time = current_time - self.start_time
             fps = self.frame_count / elapsed_time if elapsed_time > 0 else 0
             avg_persons = self.total_persons / self.frame_count if self.frame_count > 0 else 0
-            avg_frontal_persons = self.total_frontal_persons / self.frame_count if self.frame_count > 0 else 0
+            avg_visible_face_persons = self.total_frontal_persons / self.frame_count if self.frame_count > 0 else 0
             
             self.current_stats = {
                 'frame_count': self.frame_count,
                 'person_count': people_count,
-                'frontal_person_count': frontal_people_count,
+                'frontal_person_count': visible_face_count,
                 'total_persons': self.total_persons,
                 'total_frontal_persons': self.total_frontal_persons,
                 'avg_persons': round(avg_persons, 2),
-                'avg_frontal_persons': round(avg_frontal_persons, 2),
+                'avg_frontal_persons': round(avg_visible_face_persons, 2),
                 'fps': round(fps, 2),
                 'elapsed_time': round(elapsed_time, 2),
                 'max_persons': max(self.person_counts) if self.person_counts else 0,

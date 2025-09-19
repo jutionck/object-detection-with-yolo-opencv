@@ -2,29 +2,56 @@ import cv2
 import numpy as np
 
 class FrontalPersonDetector:
-    def __init__(self):
-        # Initialize face cascade classifier for frontal face detection
-        self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-        
-        # Alternative: Profile face cascade for side faces (to exclude)
-        self.profile_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_profileface.xml')
-        
-        # Minimum face size relative to person bbox
-        self.min_face_ratio = 0.05  # Face should be at least 5% of person height
-        self.max_face_ratio = 0.3   # Face should be at most 30% of person height
-        
-    def is_person_frontal(self, frame, person_bbox, confidence_threshold=0.7):
+    def __init__(self, performance_mode='balanced'):
         """
-        Determine if a person is facing the camera based on frontal face detection
+        Lite version of frontal person detector for better performance
         
-        Args:
-            frame: Input image frame
-            person_bbox: [x1, y1, x2, y2] bounding box of detected person
-            confidence_threshold: Minimum confidence for considering detection valid
+        performance_mode:
+        - 'fast': Only frontal face detection, minimal quality checks
+        - 'balanced': Frontal + profile, basic quality checks  
+        - 'quality': All cascades with full quality assessment
+        """
+        self.performance_mode = performance_mode
+        
+        # Always load frontal face cascade
+        self.frontal_face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+        
+        # Load additional cascades based on performance mode
+        if performance_mode in ['balanced', 'quality']:
+            self.profile_face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_profileface.xml')
+        
+        if performance_mode == 'quality':
+            self.alt_face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_alt.xml')
+        
+        # Adjust thresholds based on performance mode
+        if performance_mode == 'fast':
+            self.min_face_ratio = 0.03  # More lenient
+            self.max_face_ratio = 0.4   # More lenient  
+            self.confidence_threshold = 0.3  # Much lower threshold
+            self.min_neighbors = 2      # More lenient
+        elif performance_mode == 'balanced':
+            self.min_face_ratio = 0.03
+            self.max_face_ratio = 0.4
+            self.confidence_threshold = 0.4  # Lower threshold
+            self.min_neighbors = 3      # More lenient
+        else:  # quality
+            self.min_face_ratio = 0.03
+            self.max_face_ratio = 0.4
+            self.confidence_threshold = 0.3  # Lower threshold
+            self.min_neighbors = 4      # More lenient
+        
+        # Frame skip for performance optimization
+        self.frame_skip = 1 if performance_mode == 'quality' else 2 if performance_mode == 'balanced' else 3
+        self.frame_counter = 0
+        self.last_detection_results = []
+        
+    def is_person_frontal(self, frame, person_bbox, confidence_threshold=None):
+        """
+        Optimized face visibility detection
+        """
+        if confidence_threshold is None:
+            confidence_threshold = self.confidence_threshold
             
-        Returns:
-            tuple: (is_frontal: bool, face_info: dict)
-        """
         try:
             x1, y1, x2, y2 = [int(coord) for coord in person_bbox]
             
@@ -36,170 +63,197 @@ class FrontalPersonDetector:
             # Convert to grayscale for face detection
             gray_roi = cv2.cvtColor(person_roi, cv2.COLOR_BGR2GRAY)
             
-            # Detect frontal faces
-            faces = self.face_cascade.detectMultiScale(
+            # Apply histogram equalization for better detection in poor lighting
+            if self.performance_mode == 'quality':
+                gray_roi = cv2.equalizeHist(gray_roi)
+            
+            all_faces = []
+            
+            # Detect frontal faces (always enabled)
+            frontal_faces = self.frontal_face_cascade.detectMultiScale(
                 gray_roi,
-                scaleFactor=1.1,
-                minNeighbors=5,
-                minSize=(30, 30),
+                scaleFactor=1.05,  # Smaller scale factor for better detection
+                minNeighbors=self.min_neighbors,
+                minSize=(10, 10),  # Smaller minimum size
                 flags=cv2.CASCADE_SCALE_IMAGE
             )
             
-            person_height = y2 - y1
-            person_width = x2 - x1
+            for (fx, fy, fw, fh) in frontal_faces:
+                all_faces.append((fx, fy, fw, fh, 'frontal'))
             
-            frontal_faces = []
-            for (fx, fy, fw, fh) in faces:
-                # Check if face size is reasonable relative to person
+            # Detect profile faces (if enabled)
+            if hasattr(self, 'profile_face_cascade'):
+                profile_faces = self.profile_face_cascade.detectMultiScale(
+                    gray_roi,
+                    scaleFactor=1.15,  # Slightly larger scale factor for performance
+                    minNeighbors=self.min_neighbors - 1,
+                    minSize=(15, 15),
+                    flags=cv2.CASCADE_SCALE_IMAGE
+                )
+                
+                for (fx, fy, fw, fh) in profile_faces:
+                    all_faces.append((fx, fy, fw, fh, 'profile'))
+            
+            # Detect with alternative cascade (if enabled)
+            if hasattr(self, 'alt_face_cascade'):
+                alt_faces = self.alt_face_cascade.detectMultiScale(
+                    gray_roi,
+                    scaleFactor=1.15,
+                    minNeighbors=self.min_neighbors - 1,
+                    minSize=(15, 15),
+                    flags=cv2.CASCADE_SCALE_IMAGE
+                )
+                
+                for (fx, fy, fw, fh) in alt_faces:
+                    all_faces.append((fx, fy, fw, fh, 'alternative'))
+            
+            # Remove duplicates (simplified for performance)
+            if self.performance_mode == 'fast':
+                unique_faces = all_faces  # Skip duplicate removal for speed
+            else:
+                unique_faces = self._remove_duplicate_faces_fast(all_faces)
+            
+            person_height = y2 - y1
+            
+            valid_faces = []
+            for (fx, fy, fw, fh, face_type) in unique_faces:
+                # Check if face size is reasonable
                 face_ratio = fh / person_height
                 
                 if self.min_face_ratio <= face_ratio <= self.max_face_ratio:
-                    # Check face position (should be in upper portion of person)
+                    # Check face position (more lenient)
                     face_y_ratio = fy / person_height
                     
-                    if face_y_ratio <= 0.5:  # Face in upper 50% of person
-                        # Calculate face quality metrics
-                        face_roi = gray_roi[fy:fy+fh, fx:fx+fw]
-                        face_quality = self._assess_face_quality(face_roi)
+                    if face_y_ratio <= 0.7:  # Face in upper 70% of person
+                        # Simplified quality assessment
+                        if self.performance_mode == 'fast':
+                            face_quality = 0.5  # Lower quality requirement for speed
+                        else:
+                            face_roi = gray_roi[fy:fy+fh, fx:fx+fw]
+                            face_quality = self._assess_face_quality_fast(face_roi)
                         
                         if face_quality > confidence_threshold:
-                            frontal_faces.append({
-                                'bbox': [fx + x1, fy + y1, fw, fh],
-                                'quality': face_quality,
-                                'face_ratio': face_ratio,
-                                'position_ratio': face_y_ratio
+                            valid_faces.append({
+                                'bbox': [int(fx + x1), int(fy + y1), int(fw), int(fh)],
+                                'quality': float(face_quality),
+                                'face_ratio': float(face_ratio),
+                                'position_ratio': float(face_y_ratio),
+                                'type': str(face_type)
                             })
             
-            # Check for profile faces (to exclude)
-            profile_faces = self.profile_cascade.detectMultiScale(
-                gray_roi,
-                scaleFactor=1.1,
-                minNeighbors=3,
-                minSize=(30, 30)
-            )
-            
-            has_profile = len(profile_faces) > 0
-            has_frontal = len(frontal_faces) > 0
-            
-            # Person is frontal if:
-            # 1. Has frontal face(s) detected
-            # 2. No strong profile face detected OR frontal face quality is higher
-            is_frontal = has_frontal and (not has_profile or len(frontal_faces) >= len(profile_faces))
+            has_visible_face = len(valid_faces) > 0
             
             face_info = {
-                'frontal_faces': frontal_faces,
-                'profile_faces_count': len(profile_faces),
-                'best_frontal_quality': max([f['quality'] for f in frontal_faces]) if frontal_faces else 0,
-                'person_size': (person_width, person_height)
+                'visible_faces': valid_faces,
+                'total_faces_detected': int(len(unique_faces)),
+                'best_face_quality': float(max([f['quality'] for f in valid_faces]) if valid_faces else 0),
+                'person_size': (int(x2-x1), int(person_height)),
+                'face_types': [str(f['type']) for f in valid_faces]
             }
             
-            return is_frontal, face_info
+            return has_visible_face, face_info
             
         except Exception as e:
-            print(f"Error in frontal detection: {e}")
+            print(f"Error in face detection: {e}")
             return False, {}
     
-    def _assess_face_quality(self, face_roi):
+    def _remove_duplicate_faces_fast(self, all_faces, overlap_threshold=0.4):
         """
-        Assess the quality of detected face for frontal determination
+        Fast duplicate removal with higher overlap threshold
+        """
+        if not all_faces:
+            return []
         
-        Args:
-            face_roi: Grayscale face region
+        # Sort by area (larger faces first)
+        all_faces.sort(key=lambda x: x[2] * x[3], reverse=True)
+        
+        unique_faces = []
+        for face in all_faces:
+            x1, y1, w1, h1, face_type = face
+            is_duplicate = False
             
-        Returns:
-            float: Quality score (0-1)
+            # Only check against first few existing faces for performance
+            for existing_face in unique_faces[:3]:  # Limit comparison
+                x2, y2, w2, h2, _ = existing_face
+                
+                # Quick overlap check
+                if (abs(x1 - x2) < max(w1, w2) * 0.5 and 
+                    abs(y1 - y2) < max(h1, h2) * 0.5):
+                    is_duplicate = True
+                    break
+            
+            if not is_duplicate:
+                unique_faces.append(face)
+        
+        return unique_faces
+    
+    def _assess_face_quality_fast(self, face_roi):
+        """
+        Fast face quality assessment
         """
         if face_roi.size == 0:
             return 0.0
         
         try:
-            # Calculate face quality metrics
-            
-            # 1. Contrast (higher is better for clear faces)
+            # Quick quality metrics
             contrast = face_roi.std() / 255.0
+            mean_brightness = np.mean(face_roi) / 255.0
+            brightness_score = 1.0 - abs(mean_brightness - 0.5) * 2
             
-            # 2. Symmetry check (frontal faces should be more symmetric)
+            # Size check
             h, w = face_roi.shape
-            left_half = face_roi[:, :w//2]
-            right_half = cv2.flip(face_roi[:, w//2:], 1)
+            size_score = 1.0 if min(h, w) >= 15 else min(h, w) / 15.0
             
-            # Resize to match if needed
-            min_width = min(left_half.shape[1], right_half.shape[1])
-            left_half = left_half[:, :min_width]
-            right_half = right_half[:, :min_width]
-            
-            # Calculate symmetry score
-            if left_half.shape == right_half.shape:
-                symmetry = 1.0 - (np.mean(np.abs(left_half.astype(float) - right_half.astype(float))) / 255.0)
-            else:
-                symmetry = 0.5
-            
-            # 3. Edge density (faces should have reasonable edge content)
-            edges = cv2.Canny(face_roi, 50, 150)
-            edge_density = np.sum(edges > 0) / (face_roi.shape[0] * face_roi.shape[1])
-            edge_score = min(edge_density * 10, 1.0)  # Normalize
-            
-            # Combine metrics
-            quality_score = (contrast * 0.3 + symmetry * 0.5 + edge_score * 0.2)
+            # Simple combination
+            quality_score = (contrast * 0.4 + brightness_score * 0.3 + size_score * 0.3)
             
             return min(max(quality_score, 0.0), 1.0)
             
-        except Exception as e:
-            print(f"Error in face quality assessment: {e}")
+        except Exception:
             return 0.0
     
     def annotate_frontal_persons(self, frame, person_detections, frontal_results):
         """
-        Annotate frame with frontal person indicators
-        
-        Args:
-            frame: Input frame
-            person_detections: List of person detection results
-            frontal_results: List of frontal detection results
-            
-        Returns:
-            annotated_frame: Frame with annotations
+        Lightweight annotation
         """
         annotated_frame = frame.copy()
         
-        for i, (person_bbox, (is_frontal, face_info)) in enumerate(zip(person_detections, frontal_results)):
+        for i, (person_bbox, (has_visible_face, face_info)) in enumerate(zip(person_detections, frontal_results)):
             x1, y1, x2, y2 = [int(coord) for coord in person_bbox['bbox']]
             
-            # Color coding: Green for frontal, Red for non-frontal
-            color = (0, 255, 0) if is_frontal else (0, 0, 255)
-            thickness = 3 if is_frontal else 2
+            # Color coding
+            color = (0, 255, 0) if has_visible_face else (0, 0, 255)
+            thickness = 3 if has_visible_face else 2
             
             # Draw person bounding box
             cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), color, thickness)
             
-            # Label
-            label = f"Frontal Person" if is_frontal else "Person"
+            # Simple label
+            label = f"Face" if has_visible_face else "Person"
             if 'confidence' in person_bbox:
                 label += f" {person_bbox['confidence']:.2f}"
                 
             cv2.putText(annotated_frame, label, (x1, y1-10), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
             
-            # Draw detected faces
-            if is_frontal and face_info.get('frontal_faces'):
-                for face in face_info['frontal_faces']:
+            # Draw faces (simplified)
+            if has_visible_face and face_info.get('visible_faces') and self.performance_mode != 'fast':
+                for face in face_info['visible_faces'][:2]:  # Limit to 2 faces for performance
                     fx, fy, fw, fh = face['bbox']
-                    cv2.rectangle(annotated_frame, (fx, fy), (fx+fw, fy+fh), (255, 255, 0), 2)
-                    cv2.putText(annotated_frame, f"Face {face['quality']:.2f}", 
-                               (fx, fy-5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1)
+                    cv2.rectangle(annotated_frame, (fx, fy), (fx+fw, fy+fh), (255, 255, 0), 1)
         
         return annotated_frame
     
+    def should_process_frame(self):
+        """
+        Frame skip logic for performance optimization
+        """
+        self.frame_counter += 1
+        return self.frame_counter % self.frame_skip == 0
+    
     def filter_frontal_persons(self, frame, yolo_results):
         """
-        Filter YOLO person detections to keep only frontal-facing persons
-        
-        Args:
-            frame: Input frame
-            yolo_results: YOLO detection results
-            
-        Returns:
-            tuple: (frontal_persons, all_persons, frontal_results)
+        Optimized person filtering with frame skipping
         """
         all_persons = []
         frontal_persons = []
@@ -213,17 +267,35 @@ class FrontalPersonDetector:
                 x1, y1, x2, y2 = box.xyxy[0].tolist()
                 
                 person_data = {
-                    'bbox': [x1, y1, x2, y2],
-                    'confidence': confidence
+                    'bbox': [float(x1), float(y1), float(x2), float(y2)],
+                    'confidence': float(confidence)
                 }
                 all_persons.append(person_data)
                 
-                # Check if person is frontal
-                is_frontal, face_info = self.is_person_frontal(frame, [x1, y1, x2, y2])
-                frontal_results.append((is_frontal, face_info))
-                
-                if is_frontal:
-                    person_data['face_info'] = face_info
-                    frontal_persons.append(person_data)
+                # Face detection with frame skipping
+                if self.should_process_frame():
+                    is_visible, face_info = self.is_person_frontal(frame, [x1, y1, x2, y2])
+                    frontal_results.append((is_visible, face_info))
+                    
+                    if is_visible:
+                        person_data['face_info'] = face_info
+                        frontal_persons.append(person_data)
+                    
+                    # Store results for skipped frames
+                    self.last_detection_results = frontal_results
+                else:
+                    # Use last detection results for skipped frames
+                    if len(self.last_detection_results) > len(frontal_results):
+                        idx = len(frontal_results)
+                        if idx < len(self.last_detection_results):
+                            is_visible, face_info = self.last_detection_results[idx]
+                            frontal_results.append((is_visible, face_info))
+                            
+                            if is_visible:
+                                person_data['face_info'] = face_info
+                                frontal_persons.append(person_data)
+                    else:
+                        # Default to no face detected for new persons
+                        frontal_results.append((False, {}))
         
         return frontal_persons, all_persons, frontal_results

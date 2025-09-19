@@ -240,7 +240,7 @@
                     </div>
                     <div class="stat-card" style="background: linear-gradient(135deg, #28a745, #20c997);">
                         <div class="stat-value" id="currentFrontalPersons">0</div>
-                        <div class="stat-label">Orang Frontal</div>
+                        <div class="stat-label">Wajah Terlihat</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-value" id="totalPersons">0</div>
@@ -248,7 +248,7 @@
                     </div>
                     <div class="stat-card" style="background: linear-gradient(135deg, #28a745, #20c997);">
                         <div class="stat-value" id="totalFrontalPersons">0</div>
-                        <div class="stat-label">Total Frontal</div>
+                        <div class="stat-label">Total Wajah Terlihat</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-value" id="avgPersons">0</div>
@@ -256,7 +256,7 @@
                     </div>
                     <div class="stat-card" style="background: linear-gradient(135deg, #28a745, #20c997);">
                         <div class="stat-value" id="avgFrontalPersons">0</div>
-                        <div class="stat-label">Rata-rata Frontal</div>
+                        <div class="stat-label">Rata-rata Wajah Terlihat</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-value" id="fps">0</div>
@@ -281,7 +281,7 @@
             </div>
             
             <div class="chart-container">
-                <h3>📊 Distribusi Frontal vs Semua</h3>
+                <h3>📊 Distribusi Wajah Terlihat vs Semua</h3>
                 <canvas id="distributionChart" width="400" height="200"></canvas>
             </div>
         </div>
@@ -314,7 +314,7 @@
                         backgroundColor: 'rgba(75, 192, 192, 0.2)',
                         tension: 0.1
                     }, {
-                        label: 'Orang Frontal',
+                        label: 'Wajah Terlihat',
                         data: [],
                         borderColor: 'rgb(40, 167, 69)',
                         backgroundColor: 'rgba(40, 167, 69, 0.2)',
@@ -343,7 +343,7 @@
                         borderColor: 'rgba(153, 102, 255, 1)',
                         borderWidth: 1
                     }, {
-                        label: 'Orang Frontal',
+                        label: 'Wajah Terlihat',
                         data: [],
                         backgroundColor: 'rgba(40, 167, 69, 0.6)',
                         borderColor: 'rgba(40, 167, 69, 1)',
@@ -446,7 +446,7 @@
             
             const time = new Date(detectionData.timestamp).toLocaleTimeString();
             const frontalCount = detectionData.frontal_person_count || 0;
-            entry.textContent = `[${time}] Frame ${detectionData.frame}: ${detectionData.person_count} orang (${frontalCount} frontal)`;
+            entry.textContent = `[${time}] Frame ${detectionData.frame}: ${detectionData.person_count} orang (${frontalCount} wajah terlihat)`;
             
             logContainer.insertBefore(entry, logContainer.firstChild);
             

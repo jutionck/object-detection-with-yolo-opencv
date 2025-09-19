@@ -13,8 +13,8 @@ from frontal_detector import FrontalPersonDetector
 # Load YOLOv8 (nano for speed, small for accuracy)
 model = YOLO("yolov8n.pt")
 
-# Initialize frontal person detector
-frontal_detector = FrontalPersonDetector()
+# Initialize frontal person detector with balanced mode for console
+frontal_detector = FrontalPersonDetector(performance_mode='balanced')
 
 # Initialize reporting variables
 detection_data = []
@@ -82,15 +82,15 @@ while True:
     # Process all persons
     for person in all_persons:
         persons_detected.append({
-            'confidence': person['confidence'],
-            'bbox': person['bbox']
+            'confidence': float(person['confidence']),
+            'bbox': [float(x) for x in person['bbox']]
         })
     
     # Process frontal persons
     for person in frontal_persons:
         frontal_persons_detected.append({
-            'confidence': person['confidence'],
-            'bbox': person['bbox'],
+            'confidence': float(person['confidence']),
+            'bbox': [float(x) for x in person['bbox']],
             'face_info': person.get('face_info', {})
         })
 
@@ -118,11 +118,11 @@ while True:
     avg_frontal_persons = total_frontal_persons / frame_count if frame_count > 0 else 0
     
     # Display real-time report
-    cv2.putText(annotated_frame, f"Semua Orang: {people_count} | Frontal: {frontal_people_count}", (20, 40), 
+    cv2.putText(annotated_frame, f"Semua Orang: {people_count} | Wajah Terlihat: {frontal_people_count}", (20, 40), 
                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-    cv2.putText(annotated_frame, f"Total: {total_persons} | Frontal: {total_frontal_persons}", (20, 80), 
+    cv2.putText(annotated_frame, f"Total: {total_persons} | Wajah Terlihat: {total_frontal_persons}", (20, 80), 
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-    cv2.putText(annotated_frame, f"Avg: {avg_persons:.1f} | Avg Frontal: {avg_frontal_persons:.1f}", (20, 120), 
+    cv2.putText(annotated_frame, f"Avg: {avg_persons:.1f} | Avg Wajah: {avg_frontal_persons:.1f}", (20, 120), 
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
     cv2.putText(annotated_frame, f"FPS: {fps:.1f} | Frame: {frame_count}", (20, 160), 
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
@@ -134,7 +134,7 @@ while True:
 
     # Print real-time console report every 30 frames
     if frame_count % 30 == 0:
-        print(f"Frame {frame_count}: {people_count} orang ({frontal_people_count} frontal) | Total: {total_persons} | Frontal: {total_frontal_persons} | FPS: {fps:.1f}")
+        print(f"Frame {frame_count}: {people_count} orang ({frontal_people_count} wajah terlihat) | Total: {total_persons} | Wajah: {total_frontal_persons} | FPS: {fps:.1f}")
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
@@ -153,13 +153,13 @@ print(f"Total Frame: {frame_count}")
 print(f"Total Durasi: {total_duration:.2f} detik")
 print(f"FPS Rata-rata: {frame_count/total_duration:.2f}")
 print(f"Total Person Terdeteksi: {total_persons}")
-print(f"Total Frontal Person Terdeteksi: {total_frontal_persons}")
+print(f"Total Person Wajah Terlihat: {total_frontal_persons}")
 print(f"Rata-rata Person per Frame: {total_persons/frame_count:.2f}")
-print(f"Rata-rata Frontal Person per Frame: {total_frontal_persons/frame_count:.2f}")
+print(f"Rata-rata Person Wajah Terlihat per Frame: {total_frontal_persons/frame_count:.2f}")
 print(f"Max Person dalam 1 Frame: {max(person_counts) if person_counts else 0}")
 print(f"Min Person dalam 1 Frame: {min(person_counts) if person_counts else 0}")
-print(f"Max Frontal Person dalam 1 Frame: {max(frontal_person_counts) if frontal_person_counts else 0}")
-print(f"Min Frontal Person dalam 1 Frame: {min(frontal_person_counts) if frontal_person_counts else 0}")
+print(f"Max Person Wajah Terlihat dalam 1 Frame: {max(frontal_person_counts) if frontal_person_counts else 0}")
+print(f"Min Person Wajah Terlihat dalam 1 Frame: {min(frontal_person_counts) if frontal_person_counts else 0}")
 
 # Save to JSON file
 report_filename = f"person_detection_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
@@ -199,7 +199,7 @@ frontal_counts = [data.get('frontal_person_count', 0) for data in detection_data
 # Timeline plot
 plt.subplot(2, 2, 1)
 plt.plot(frames, counts, 'b-', linewidth=1, label='Semua Orang')
-plt.plot(frames, frontal_counts, 'g-', linewidth=1, label='Orang Frontal')
+plt.plot(frames, frontal_counts, 'g-', linewidth=1, label='Wajah Terlihat')
 plt.title('Deteksi Person per Frame')
 plt.xlabel('Frame')
 plt.ylabel('Jumlah Person')
@@ -216,8 +216,8 @@ plt.grid(True, alpha=0.3)
 
 # Distribution - Frontal persons
 plt.subplot(2, 2, 3)
-plt.hist(frontal_counts, bins=20, alpha=0.7, color='green', label='Orang Frontal')
-plt.title('Distribusi Frontal Person')
+plt.hist(frontal_counts, bins=20, alpha=0.7, color='green', label='Wajah Terlihat')
+plt.title('Distribusi Person Wajah Terlihat')
 plt.xlabel('Jumlah Person')
 plt.ylabel('Frekuensi')
 plt.grid(True, alpha=0.3)
@@ -225,7 +225,7 @@ plt.grid(True, alpha=0.3)
 # Comparison bar chart
 plt.subplot(2, 2, 4)
 comparison_data = [total_persons, total_frontal_persons]
-comparison_labels = ['Semua Orang', 'Orang Frontal']
+comparison_labels = ['Semua Orang', 'Wajah Terlihat']
 plt.bar(comparison_labels, comparison_data, color=['blue', 'green'], alpha=0.7)
 plt.title('Total Deteksi Perbandingan')
 plt.ylabel('Total Deteksi')
