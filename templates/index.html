@@ -271,6 +271,43 @@
                         <div class="stat-label">Waktu Berjalan</div>
                     </div>
                 </div>
+                
+                <div class="demographics-section" style="margin-top: 20px;">
+                    <h4>📊 Demografis (Wajah Terlihat)</h4>
+                    <div class="demo-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                        <div class="demo-card" style="background: #f8f9fa; padding: 15px; border-radius: 8px;">
+                            <h5 style="margin-bottom: 10px; color: #495057;">Gender</h5>
+                            <div id="genderStats">
+                                <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                                    <span>👨 Laki-laki:</span> <span id="maleCount">0</span>
+                                </div>
+                                <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                                    <span>👩 Perempuan:</span> <span id="femaleCount">0</span>
+                                </div>
+                                <div style="display: flex; justify-content: space-between;">
+                                    <span>❓ Tidak Diketahui:</span> <span id="unknownGenderCount">0</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="demo-card" style="background: #f8f9fa; padding: 15px; border-radius: 8px;">
+                            <h5 style="margin-bottom: 10px; color: #495057;">Kelompok Usia</h5>
+                            <div id="ageStats" style="font-size: 12px;">
+                                <div style="display: flex; justify-content: space-between; margin-bottom: 3px;">
+                                    <span>👶 0-12:</span> <span id="childCount">0</span>
+                                </div>
+                                <div style="display: flex; justify-content: space-between; margin-bottom: 3px;">
+                                    <span>🧑 15-32:</span> <span id="youngCount">0</span>
+                                </div>
+                                <div style="display: flex; justify-content: space-between; margin-bottom: 3px;">
+                                    <span>👨‍💼 38-53:</span> <span id="adultCount">0</span>
+                                </div>
+                                <div style="display: flex; justify-content: space-between;">
+                                    <span>👴 60+:</span> <span id="seniorCount">0</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
         
@@ -299,6 +336,10 @@
         let frontalTimelineData = [];
         let distributionData = {};
         let frontalDistributionData = {};
+        let demographicsData = {
+            gender: { Male: 0, Female: 0, Unknown: 0 },
+            age: { child: 0, young: 0, adult: 0, senior: 0 }
+        };
         
         // Initialize charts
         function initCharts() {
@@ -376,6 +417,7 @@
             updateStats(data.stats);
             updateVideoFrame(data.frame);
             updateCharts(data.detection_data);
+            updateDemographics(data.detection_data);
             addLogEntry(data.detection_data);
         });
         
@@ -439,6 +481,53 @@
             distributionChart.update('none');
         }
         
+        function updateDemographics(detectionData) {
+            // Process demographics data from frontal persons
+            if (detectionData.frontal_persons) {
+                detectionData.frontal_persons.forEach(person => {
+                    if (person.demographics) {
+                        const demo = person.demographics;
+                        
+                        // Update gender count
+                        if (demo.gender && demographicsData.gender[demo.gender] !== undefined) {
+                            demographicsData.gender[demo.gender]++;
+                        } else {
+                            demographicsData.gender.Unknown++;
+                        }
+                        
+                        // Update age count
+                        if (demo.age_group) {
+                            if (demo.age_group.includes('0-2') || demo.age_group.includes('4-6') || demo.age_group.includes('8-12')) {
+                                demographicsData.age.child++;
+                            } else if (demo.age_group.includes('15-20') || demo.age_group.includes('25-32')) {
+                                demographicsData.age.young++;
+                            } else if (demo.age_group.includes('38-43') || demo.age_group.includes('48-53')) {
+                                demographicsData.age.adult++;
+                            } else if (demo.age_group.includes('60-100')) {
+                                demographicsData.age.senior++;
+                            }
+                        }
+                    }
+                });
+                
+                // Update UI
+                updateDemographicsDisplay();
+            }
+        }
+        
+        function updateDemographicsDisplay() {
+            // Update gender stats
+            document.getElementById('maleCount').textContent = demographicsData.gender.Male;
+            document.getElementById('femaleCount').textContent = demographicsData.gender.Female;
+            document.getElementById('unknownGenderCount').textContent = demographicsData.gender.Unknown;
+            
+            // Update age stats
+            document.getElementById('childCount').textContent = demographicsData.age.child;
+            document.getElementById('youngCount').textContent = demographicsData.age.young;
+            document.getElementById('adultCount').textContent = demographicsData.age.adult;
+            document.getElementById('seniorCount').textContent = demographicsData.age.senior;
+        }
+        
         function addLogEntry(detectionData) {
             const logContainer = document.getElementById('logEntries');
             const entry = document.createElement('div');
@@ -446,7 +535,19 @@
             
             const time = new Date(detectionData.timestamp).toLocaleTimeString();
             const frontalCount = detectionData.frontal_person_count || 0;
-            entry.textContent = `[${time}] Frame ${detectionData.frame}: ${detectionData.person_count} orang (${frontalCount} wajah terlihat)`;
+            
+            // Add demographics info to log if available
+            let demoInfo = '';
+            if (detectionData.frontal_persons && detectionData.frontal_persons.length > 0) {
+                const demoPersons = detectionData.frontal_persons.filter(p => p.demographics);
+                if (demoPersons.length > 0) {
+                    const males = demoPersons.filter(p => p.demographics.gender === 'Male').length;
+                    const females = demoPersons.filter(p => p.demographics.gender === 'Female').length;
+                    demoInfo = ` - ${males}M/${females}F`;
+                }
+            }
+            
+            entry.textContent = `[${time}] Frame ${detectionData.frame}: ${detectionData.person_count} orang (${frontalCount} wajah terlihat${demoInfo})`;
             
             logContainer.insertBefore(entry, logContainer.firstChild);
             
@@ -500,11 +601,16 @@
                     document.getElementById('connectionStatus').textContent = 'Deteksi Berjalan';
                     document.getElementById('connectionStatus').className = 'status running';
                     
-                    // Reset charts
+                    // Reset charts and demographics
                     timelineData = [];
                     frontalTimelineData = [];
                     distributionData = {};
                     frontalDistributionData = {};
+                    demographicsData = {
+                        gender: { Male: 0, Female: 0, Unknown: 0 },
+                        age: { child: 0, young: 0, adult: 0, senior: 0 }
+                    };
+                    
                     timelineChart.data.labels = [];
                     timelineChart.data.datasets[0].data = [];
                     timelineChart.data.datasets[1].data = [];
@@ -513,6 +619,9 @@
                     distributionChart.data.datasets[0].data = [];
                     distributionChart.data.datasets[1].data = [];
                     distributionChart.update();
+                    
+                    // Reset demographics display
+                    updateDemographicsDisplay();
                 } else {
                     alert('Gagal memulai deteksi: ' + result.message);
                 }

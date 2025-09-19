@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+from gender_age_detector import gender_age_detector
 
 class FrontalPersonDetector:
     def __init__(self, performance_mode='balanced'):
@@ -236,11 +237,20 @@ class FrontalPersonDetector:
             cv2.putText(annotated_frame, label, (x1, y1-10), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
             
-            # Draw faces (simplified)
+            # Draw faces with demographics (simplified)
             if has_visible_face and face_info.get('visible_faces') and self.performance_mode != 'fast':
                 for face in face_info['visible_faces'][:2]:  # Limit to 2 faces for performance
                     fx, fy, fw, fh = face['bbox']
                     cv2.rectangle(annotated_frame, (fx, fy), (fx+fw, fy+fh), (255, 255, 0), 1)
+                    
+                    # Add demographics info if available
+                    if 'demographics' in face:
+                        demo = face['demographics']
+                        gender = demo.get('gender', 'Unknown')
+                        age = demo.get('age_group', 'Unknown')
+                        demo_text = f"{gender[:1]},{age}"
+                        cv2.putText(annotated_frame, demo_text, (fx, fy-25), 
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 0), 1)
         
         return annotated_frame
     
@@ -275,6 +285,20 @@ class FrontalPersonDetector:
                 # Face detection with frame skipping
                 if self.should_process_frame():
                     is_visible, face_info = self.is_person_frontal(frame, [x1, y1, x2, y2])
+                    
+                    # Add demographics analysis if faces are visible
+                    if is_visible and face_info.get('visible_faces'):
+                        demographics = gender_age_detector.analyze_person_demographics(
+                            frame, [x1, y1, x2, y2], face_info['visible_faces']
+                        )
+                        
+                        # Add demographics to each face
+                        for face in face_info['visible_faces']:
+                            face['demographics'] = demographics
+                        
+                        # Add demographics to person data
+                        person_data['demographics'] = demographics
+                    
                     frontal_results.append((is_visible, face_info))
                     
                     if is_visible:

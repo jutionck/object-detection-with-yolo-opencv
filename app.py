@@ -33,6 +33,9 @@ class DetectionSystem:
         self.total_persons = 0
         self.total_frontal_persons = 0
         self.current_stats = {}
+        self.demographics_history = []
+        self.gender_stats = {'Male': 0, 'Female': 0, 'Unknown': 0}
+        self.age_stats = {'child': 0, 'young': 0, 'adult': 0, 'senior': 0}
         
     def initialize_video_source(self, source='sample.mp4'):
         if source == 'webcam':
@@ -67,6 +70,9 @@ class DetectionSystem:
         self.detection_data = []
         self.person_counts = deque(maxlen=100)
         self.frontal_person_counts = deque(maxlen=100)
+        self.demographics_history = []
+        self.gender_stats = {'Male': 0, 'Female': 0, 'Unknown': 0}
+        self.age_stats = {'child': 0, 'young': 0, 'adult': 0, 'senior': 0}
         
         thread = threading.Thread(target=self._detection_loop)
         thread.daemon = True
@@ -111,13 +117,43 @@ class DetectionSystem:
                     'bbox': [float(x) for x in person['bbox']]
                 })
             
-            # Process persons with visible faces
+            # Process persons with visible faces and collect demographics
+            current_frame_demographics = []
             for person in frontal_persons:
-                visible_face_persons_detected.append({
+                person_data = {
                     'confidence': float(person['confidence']),
                     'bbox': [float(x) for x in person['bbox']],
                     'face_info': person.get('face_info', {})
-                })
+                }
+                
+                # Add demographics if available
+                if 'demographics' in person:
+                    person_data['demographics'] = person['demographics']
+                    current_frame_demographics.append(person['demographics'])
+                    
+                    # Update statistics
+                    demo = person['demographics']
+                    if demo.get('gender') in self.gender_stats:
+                        self.gender_stats[demo['gender']] += 1
+                    else:
+                        self.gender_stats['Unknown'] += 1
+                    
+                    # Update age statistics
+                    age_group = demo.get('age_group', '')
+                    if any(age in age_group for age in ['0-2', '4-6', '8-12']):
+                        self.age_stats['child'] += 1
+                    elif any(age in age_group for age in ['15-20', '25-32']):
+                        self.age_stats['young'] += 1
+                    elif any(age in age_group for age in ['38-43', '48-53']):
+                        self.age_stats['adult'] += 1
+                    elif '60-100' in age_group:
+                        self.age_stats['senior'] += 1
+                
+                visible_face_persons_detected.append(person_data)
+            
+            # Store demographics for this frame
+            if current_frame_demographics:
+                self.demographics_history.extend(current_frame_demographics)
             
             self.total_persons += people_count
             self.total_frontal_persons += visible_face_count
@@ -174,6 +210,20 @@ class DetectionSystem:
         end_time = time.time()
         total_duration = end_time - self.start_time
         
+        # Calculate demographics percentages
+        total_demographics = sum(self.gender_stats.values())
+        gender_percentages = {}
+        age_percentages = {}
+        
+        if total_demographics > 0:
+            for gender, count in self.gender_stats.items():
+                gender_percentages[gender] = round((count / total_demographics) * 100, 1)
+            
+            total_age = sum(self.age_stats.values())
+            if total_age > 0:
+                for age_group, count in self.age_stats.items():
+                    age_percentages[age_group] = round((count / total_age) * 100, 1)
+        
         report = {
             'summary': {
                 'total_frames': self.frame_count,
@@ -186,9 +236,17 @@ class DetectionSystem:
                 'max_persons_in_frame': max(self.person_counts) if self.person_counts else 0,
                 'min_persons_in_frame': min(self.person_counts) if self.person_counts else 0,
                 'max_frontal_persons_in_frame': max(self.frontal_person_counts) if self.frontal_person_counts else 0,
-                'min_frontal_persons_in_frame': min(self.frontal_person_counts) if self.frontal_person_counts else 0
+                'min_frontal_persons_in_frame': min(self.frontal_person_counts) if self.frontal_person_counts else 0,
+                'demographics': {
+                    'total_analyzed': total_demographics,
+                    'gender_distribution': self.gender_stats,
+                    'gender_percentages': gender_percentages,
+                    'age_distribution': self.age_stats,
+                    'age_percentages': age_percentages
+                }
             },
-            'detailed_data': self.detection_data
+            'detailed_data': self.detection_data,
+            'demographics_history': self.demographics_history
         }
         
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')

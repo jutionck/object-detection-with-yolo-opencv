@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from collections import deque
 from frontal_detector import FrontalPersonDetector
+from gender_age_detector import gender_age_detector
 
 # Load YOLOv8 (nano for speed, small for accuracy)
 model = YOLO("yolov8n.pt")
@@ -24,6 +25,11 @@ start_time = time.time()
 frame_count = 0
 total_persons = 0
 total_frontal_persons = 0
+
+# Demographics tracking
+demographics_history = []
+gender_stats = {'Male': 0, 'Female': 0, 'Unknown': 0}
+age_stats = {'child': 0, 'young': 0, 'adult': 0, 'senior': 0}
 
 # Check for input argument
 if len(sys.argv) > 1:
@@ -86,13 +92,43 @@ while True:
             'bbox': [float(x) for x in person['bbox']]
         })
     
-    # Process frontal persons
+    # Process frontal persons and collect demographics
+    current_frame_demographics = []
     for person in frontal_persons:
-        frontal_persons_detected.append({
+        person_data = {
             'confidence': float(person['confidence']),
             'bbox': [float(x) for x in person['bbox']],
             'face_info': person.get('face_info', {})
-        })
+        }
+        
+        # Add demographics if available
+        if 'demographics' in person:
+            person_data['demographics'] = person['demographics']
+            current_frame_demographics.append(person['demographics'])
+            
+            # Update statistics
+            demo = person['demographics']
+            if demo.get('gender') in gender_stats:
+                gender_stats[demo['gender']] += 1
+            else:
+                gender_stats['Unknown'] += 1
+            
+            # Update age statistics
+            age_group = demo.get('age_group', '')
+            if any(age in age_group for age in ['0-2', '4-6', '8-12']):
+                age_stats['child'] += 1
+            elif any(age in age_group for age in ['15-20', '25-32']):
+                age_stats['young'] += 1
+            elif any(age in age_group for age in ['38-43', '48-53']):
+                age_stats['adult'] += 1
+            elif '60-100' in age_group:
+                age_stats['senior'] += 1
+        
+        frontal_persons_detected.append(person_data)
+    
+    # Store demographics for this frame
+    if current_frame_demographics:
+        demographics_history.extend(current_frame_demographics)
 
     # Update statistics
     total_persons += people_count
@@ -134,7 +170,14 @@ while True:
 
     # Print real-time console report every 30 frames
     if frame_count % 30 == 0:
-        print(f"Frame {frame_count}: {people_count} orang ({frontal_people_count} wajah terlihat) | Total: {total_persons} | Wajah: {total_frontal_persons} | FPS: {fps:.1f}")
+        # Demographics summary for current session
+        demo_summary = ""
+        if current_frame_demographics:
+            males = sum(1 for d in current_frame_demographics if d.get('gender') == 'Male')
+            females = sum(1 for d in current_frame_demographics if d.get('gender') == 'Female')
+            demo_summary = f" | Demo: {males}M/{females}F"
+        
+        print(f"Frame {frame_count}: {people_count} orang ({frontal_people_count} wajah terlihat) | Total: {total_persons} | Wajah: {total_frontal_persons} | FPS: {fps:.1f}{demo_summary}")
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
@@ -161,8 +204,42 @@ print(f"Min Person dalam 1 Frame: {min(person_counts) if person_counts else 0}")
 print(f"Max Person Wajah Terlihat dalam 1 Frame: {max(frontal_person_counts) if frontal_person_counts else 0}")
 print(f"Min Person Wajah Terlihat dalam 1 Frame: {min(frontal_person_counts) if frontal_person_counts else 0}")
 
+# Demographics Summary
+print("\n" + "="*30)
+print("DEMOGRAFIS SUMMARY")
+print("="*30)
+total_demographics = sum(gender_stats.values())
+if total_demographics > 0:
+    print(f"Total Orang dengan Demografis: {total_demographics}")
+    print("\nGender Distribution:")
+    for gender, count in gender_stats.items():
+        percentage = (count / total_demographics) * 100
+        print(f"  {gender}: {count} ({percentage:.1f}%)")
+    
+    print("\nAge Group Distribution:")
+    total_age = sum(age_stats.values())
+    for age_group, count in age_stats.items():
+        percentage = (count / total_age) * 100 if total_age > 0 else 0
+        print(f"  {age_group.title()}: {count} ({percentage:.1f}%)")
+else:
+    print("Tidak ada data demografis yang terdeteksi")
+
 # Save to JSON file
 report_filename = f"person_detection_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+# Calculate demographics percentages
+total_demographics = sum(gender_stats.values())
+gender_percentages = {}
+age_percentages = {}
+
+if total_demographics > 0:
+    for gender, count in gender_stats.items():
+        gender_percentages[gender] = round((count / total_demographics) * 100, 1)
+    
+    total_age = sum(age_stats.values())
+    if total_age > 0:
+        for age_group, count in age_stats.items():
+            age_percentages[age_group] = round((count / total_age) * 100, 1)
+
 with open(report_filename, 'w') as f:
     json.dump({
         'summary': {
@@ -176,28 +253,52 @@ with open(report_filename, 'w') as f:
             'max_persons_in_frame': max(person_counts) if person_counts else 0,
             'min_persons_in_frame': min(person_counts) if person_counts else 0,
             'max_frontal_persons_in_frame': max(frontal_person_counts) if frontal_person_counts else 0,
-            'min_frontal_persons_in_frame': min(frontal_person_counts) if frontal_person_counts else 0
+            'min_frontal_persons_in_frame': min(frontal_person_counts) if frontal_person_counts else 0,
+            'demographics': {
+                'total_analyzed': total_demographics,
+                'gender_distribution': gender_stats,
+                'gender_percentages': gender_percentages,
+                'age_distribution': age_stats,
+                'age_percentages': age_percentages
+            }
         },
-        'detailed_data': detection_data
+        'detailed_data': detection_data,
+        'demographics_history': demographics_history
     }, f, indent=2)
 
 # Save to CSV file
 csv_filename = f"person_detection_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
 with open(csv_filename, 'w', newline='') as f:
     writer = csv.writer(f)
-    writer.writerow(['Frame', 'Timestamp', 'Person_Count', 'Frontal_Person_Count', 'Elapsed_Time'])
+    writer.writerow(['Frame', 'Timestamp', 'Person_Count', 'Frontal_Person_Count', 'Elapsed_Time', 'Males_Detected', 'Females_Detected', 'Unknown_Gender'])
     for data in detection_data:
+        # Count demographics for this frame
+        frame_males = 0
+        frame_females = 0
+        frame_unknown = 0
+        
+        for person in data.get('frontal_persons', []):
+            if 'demographics' in person:
+                gender = person['demographics'].get('gender', 'Unknown')
+                if gender == 'Male':
+                    frame_males += 1
+                elif gender == 'Female':
+                    frame_females += 1
+                else:
+                    frame_unknown += 1
+        
         writer.writerow([data['frame'], data['timestamp'], data['person_count'], 
-                        data.get('frontal_person_count', 0), data['elapsed_time']])
+                        data.get('frontal_person_count', 0), data['elapsed_time'],
+                        frame_males, frame_females, frame_unknown])
 
 # Create and save graph
-plt.figure(figsize=(15, 8))
+plt.figure(figsize=(16, 12))
 frames = [data['frame'] for data in detection_data]
 counts = [data['person_count'] for data in detection_data]
 frontal_counts = [data.get('frontal_person_count', 0) for data in detection_data]
 
 # Timeline plot
-plt.subplot(2, 2, 1)
+plt.subplot(3, 2, 1)
 plt.plot(frames, counts, 'b-', linewidth=1, label='Semua Orang')
 plt.plot(frames, frontal_counts, 'g-', linewidth=1, label='Wajah Terlihat')
 plt.title('Deteksi Person per Frame')
@@ -207,7 +308,7 @@ plt.legend()
 plt.grid(True, alpha=0.3)
 
 # Distribution - All persons
-plt.subplot(2, 2, 2)
+plt.subplot(3, 2, 2)
 plt.hist(counts, bins=20, alpha=0.7, color='blue', label='Semua Orang')
 plt.title('Distribusi Semua Person')
 plt.xlabel('Jumlah Person')
@@ -215,7 +316,7 @@ plt.ylabel('Frekuensi')
 plt.grid(True, alpha=0.3)
 
 # Distribution - Frontal persons
-plt.subplot(2, 2, 3)
+plt.subplot(3, 2, 3)
 plt.hist(frontal_counts, bins=20, alpha=0.7, color='green', label='Wajah Terlihat')
 plt.title('Distribusi Person Wajah Terlihat')
 plt.xlabel('Jumlah Person')
@@ -223,7 +324,7 @@ plt.ylabel('Frekuensi')
 plt.grid(True, alpha=0.3)
 
 # Comparison bar chart
-plt.subplot(2, 2, 4)
+plt.subplot(3, 2, 4)
 comparison_data = [total_persons, total_frontal_persons]
 comparison_labels = ['Semua Orang', 'Wajah Terlihat']
 plt.bar(comparison_labels, comparison_data, color=['blue', 'green'], alpha=0.7)
@@ -231,6 +332,48 @@ plt.title('Total Deteksi Perbandingan')
 plt.ylabel('Total Deteksi')
 for i, v in enumerate(comparison_data):
     plt.text(i, v + max(comparison_data)*0.01, str(v), ha='center', va='bottom')
+
+# Gender distribution pie chart
+plt.subplot(3, 2, 5)
+if total_demographics > 0 and any(gender_stats.values()):
+    gender_labels = []
+    gender_values = []
+    gender_colors = ['#87CEEB', '#FFB6C1', '#D3D3D3']  # Light blue, light pink, light gray
+    
+    for i, (gender, count) in enumerate(gender_stats.items()):
+        if count > 0:
+            gender_labels.append(f'{gender}\n({count})')
+            gender_values.append(count)
+    
+    plt.pie(gender_values, labels=gender_labels, autopct='%1.1f%%', 
+            colors=gender_colors[:len(gender_values)], startangle=90)
+    plt.title('Distribusi Gender')
+else:
+    plt.text(0.5, 0.5, 'Tidak ada data\ndemografis', ha='center', va='center', transform=plt.gca().transAxes)
+    plt.title('Distribusi Gender')
+
+# Age group distribution bar chart  
+plt.subplot(3, 2, 6)
+if total_demographics > 0 and any(age_stats.values()):
+    age_labels = []
+    age_values = []
+    
+    for age_group, count in age_stats.items():
+        if count > 0:
+            age_labels.append(age_group.title())
+            age_values.append(count)
+    
+    colors = ['#FF9999', '#66B2FF', '#99FF99', '#FFCC99']
+    plt.bar(age_labels, age_values, color=colors[:len(age_values)], alpha=0.7)
+    plt.title('Distribusi Kelompok Usia')
+    plt.ylabel('Jumlah')
+    plt.xticks(rotation=45)
+    
+    for i, v in enumerate(age_values):
+        plt.text(i, v + max(age_values)*0.01, str(v), ha='center', va='bottom')
+else:
+    plt.text(0.5, 0.5, 'Tidak ada data demografis', ha='center', va='center', transform=plt.gca().transAxes)
+    plt.title('Distribusi Kelompok Usia')
 
 plt.tight_layout()
 graph_filename = f"person_detection_graph_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
