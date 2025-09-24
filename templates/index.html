@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Real-time Object Detection Dashboard</title>
+    <title>Real-time Face Detection Dashboard</title>
     <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
@@ -200,7 +200,7 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>🎯 Real-time Object Detection Dashboard</h1>
+            <h1>👤 Real-time Face Detection Dashboard</h1>
             <div id="connectionStatus" class="status disconnected">Tidak Terhubung</div>
         </div>
         
@@ -234,29 +234,21 @@
             <div class="stats-container">
                 <h3>📊 Statistik Real-time</h3>
                 <div class="stats-grid">
-                    <div class="stat-card">
-                        <div class="stat-value" id="currentPersons">0</div>
-                        <div class="stat-label">Semua Orang</div>
-                    </div>
                     <div class="stat-card" style="background: linear-gradient(135deg, #28a745, #20c997);">
-                        <div class="stat-value" id="currentFrontalPersons">0</div>
-                        <div class="stat-label">Wajah Terlihat</div>
+                        <div class="stat-value" id="currentFaces">0</div>
+                        <div class="stat-label">Wajah Saat Ini</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-value" id="totalPersons">0</div>
-                        <div class="stat-label">Total Semua</div>
-                    </div>
-                    <div class="stat-card" style="background: linear-gradient(135deg, #28a745, #20c997);">
-                        <div class="stat-value" id="totalFrontalPersons">0</div>
-                        <div class="stat-label">Total Wajah Terlihat</div>
+                        <div class="stat-value" id="totalFaces">0</div>
+                        <div class="stat-label">Total Wajah</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-value" id="avgPersons">0</div>
-                        <div class="stat-label">Rata-rata Semua</div>
+                        <div class="stat-value" id="avgFaces">0</div>
+                        <div class="stat-label">Rata-rata Wajah</div>
                     </div>
-                    <div class="stat-card" style="background: linear-gradient(135deg, #28a745, #20c997);">
-                        <div class="stat-value" id="avgFrontalPersons">0</div>
-                        <div class="stat-label">Rata-rata Wajah Terlihat</div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="maxFaces">0</div>
+                        <div class="stat-label">Max Wajah</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-value" id="fps">0</div>
@@ -273,7 +265,7 @@
                 </div>
                 
                 <div class="demographics-section" style="margin-top: 20px;">
-                    <h4>📊 Demografis (Wajah Terlihat)</h4>
+                    <h4>📊 Demografis Wajah</h4>
                     <div class="demo-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
                         <div class="demo-card" style="background: #f8f9fa; padding: 15px; border-radius: 8px;">
                             <h5 style="margin-bottom: 10px; color: #495057;">Gender</h5>
@@ -318,7 +310,7 @@
             </div>
             
             <div class="chart-container">
-                <h3>📊 Distribusi Wajah Terlihat vs Semua</h3>
+                <h3>📊 Distribusi Jumlah Wajah</h3>
                 <canvas id="distributionChart" width="400" height="200"></canvas>
             </div>
         </div>
@@ -333,9 +325,7 @@
         const socket = io();
         let timelineChart, distributionChart;
         let timelineData = [];
-        let frontalTimelineData = [];
         let distributionData = {};
-        let frontalDistributionData = {};
         let demographicsData = {
             gender: { Male: 0, Female: 0, Unknown: 0 },
             age: { child: 0, young: 0, adult: 0, senior: 0 }
@@ -349,13 +339,7 @@
                 data: {
                     labels: [],
                     datasets: [{
-                        label: 'Semua Orang',
-                        data: [],
-                        borderColor: 'rgb(75, 192, 192)',
-                        backgroundColor: 'rgba(75, 192, 192, 0.2)',
-                        tension: 0.1
-                    }, {
-                        label: 'Wajah Terlihat',
+                        label: 'Wajah Terdeteksi',
                         data: [],
                         borderColor: 'rgb(40, 167, 69)',
                         backgroundColor: 'rgba(40, 167, 69, 0.2)',
@@ -378,13 +362,7 @@
                 data: {
                     labels: [],
                     datasets: [{
-                        label: 'Semua Orang',
-                        data: [],
-                        backgroundColor: 'rgba(153, 102, 255, 0.6)',
-                        borderColor: 'rgba(153, 102, 255, 1)',
-                        borderWidth: 1
-                    }, {
-                        label: 'Wajah Terlihat',
+                        label: 'Frekuensi Wajah',
                         data: [],
                         backgroundColor: 'rgba(40, 167, 69, 0.6)',
                         borderColor: 'rgba(40, 167, 69, 1)',
@@ -422,15 +400,13 @@
         });
         
         function updateStats(stats) {
-            document.getElementById('currentPersons').textContent = stats.person_count;
-            document.getElementById('currentFrontalPersons').textContent = stats.frontal_person_count || 0;
-            document.getElementById('totalPersons').textContent = stats.total_persons;
-            document.getElementById('totalFrontalPersons').textContent = stats.total_frontal_persons || 0;
-            document.getElementById('avgPersons').textContent = stats.avg_persons;
-            document.getElementById('avgFrontalPersons').textContent = stats.avg_frontal_persons || 0;
-            document.getElementById('fps').textContent = stats.fps;
-            document.getElementById('frameCount').textContent = stats.frame_count;
-            document.getElementById('elapsedTime').textContent = stats.elapsed_time + 's';
+            document.getElementById('currentFaces').textContent = stats.face_count || 0;
+            document.getElementById('totalFaces').textContent = stats.total_faces || 0;
+            document.getElementById('avgFaces').textContent = stats.avg_faces || 0;
+            document.getElementById('maxFaces').textContent = stats.max_faces || 0;
+            document.getElementById('fps').textContent = stats.fps || 0;
+            document.getElementById('frameCount').textContent = stats.frame_count || 0;
+            document.getElementById('elapsedTime').textContent = (stats.elapsed_time || 0) + 's';
         }
         
         function updateVideoFrame(frameData) {
@@ -441,52 +417,37 @@
             // Update timeline chart
             timelineData.push({
                 frame: detectionData.frame,
-                count: detectionData.person_count
-            });
-            
-            frontalTimelineData.push({
-                frame: detectionData.frame,
-                count: detectionData.frontal_person_count || 0
+                count: detectionData.face_count || 0
             });
             
             if (timelineData.length > 50) {
                 timelineData.shift();
-                frontalTimelineData.shift();
             }
             
             timelineChart.data.labels = timelineData.map(d => d.frame);
             timelineChart.data.datasets[0].data = timelineData.map(d => d.count);
-            timelineChart.data.datasets[1].data = frontalTimelineData.map(d => d.count);
             timelineChart.update('none');
             
             // Update distribution chart
-            const count = detectionData.person_count;
-            const frontalCount = detectionData.frontal_person_count || 0;
+            const count = detectionData.face_count || 0;
             
             distributionData[count] = (distributionData[count] || 0) + 1;
-            frontalDistributionData[frontalCount] = (frontalDistributionData[frontalCount] || 0) + 1;
             
-            // Get all unique labels from both datasets
-            const allLabels = [...new Set([
-                ...Object.keys(distributionData),
-                ...Object.keys(frontalDistributionData)
-            ])].sort((a, b) => parseInt(a) - parseInt(b));
-            
+            // Get all unique labels
+            const allLabels = Object.keys(distributionData).sort((a, b) => parseInt(a) - parseInt(b));
             const values = allLabels.map(label => distributionData[label] || 0);
-            const frontalValues = allLabels.map(label => frontalDistributionData[label] || 0);
             
             distributionChart.data.labels = allLabels;
             distributionChart.data.datasets[0].data = values;
-            distributionChart.data.datasets[1].data = frontalValues;
             distributionChart.update('none');
         }
         
         function updateDemographics(detectionData) {
-            // Process demographics data from frontal persons
-            if (detectionData.frontal_persons) {
-                detectionData.frontal_persons.forEach(person => {
-                    if (person.demographics) {
-                        const demo = person.demographics;
+            // Process demographics data from faces
+            if (detectionData.faces) {
+                detectionData.faces.forEach(face => {
+                    if (face.demographics) {
+                        const demo = face.demographics;
                         
                         // Update gender count
                         if (demo.gender && demographicsData.gender[demo.gender] !== undefined) {
@@ -534,20 +495,20 @@
             entry.className = 'log-entry';
             
             const time = new Date(detectionData.timestamp).toLocaleTimeString();
-            const frontalCount = detectionData.frontal_person_count || 0;
+            const faceCount = detectionData.face_count || 0;
             
             // Add demographics info to log if available
             let demoInfo = '';
-            if (detectionData.frontal_persons && detectionData.frontal_persons.length > 0) {
-                const demoPersons = detectionData.frontal_persons.filter(p => p.demographics);
-                if (demoPersons.length > 0) {
-                    const males = demoPersons.filter(p => p.demographics.gender === 'Male').length;
-                    const females = demoPersons.filter(p => p.demographics.gender === 'Female').length;
+            if (detectionData.faces && detectionData.faces.length > 0) {
+                const demoFaces = detectionData.faces.filter(f => f.demographics);
+                if (demoFaces.length > 0) {
+                    const males = demoFaces.filter(f => f.demographics.gender === 'Male').length;
+                    const females = demoFaces.filter(f => f.demographics.gender === 'Female').length;
                     demoInfo = ` - ${males}M/${females}F`;
                 }
             }
             
-            entry.textContent = `[${time}] Frame ${detectionData.frame}: ${detectionData.person_count} orang (${frontalCount} wajah terlihat${demoInfo})`;
+            entry.textContent = `[${time}] Frame ${detectionData.frame}: ${faceCount} wajah terdeteksi${demoInfo}`;
             
             logContainer.insertBefore(entry, logContainer.firstChild);
             
@@ -603,9 +564,7 @@
                     
                     // Reset charts and demographics
                     timelineData = [];
-                    frontalTimelineData = [];
                     distributionData = {};
-                    frontalDistributionData = {};
                     demographicsData = {
                         gender: { Male: 0, Female: 0, Unknown: 0 },
                         age: { child: 0, young: 0, adult: 0, senior: 0 }
@@ -613,11 +572,9 @@
                     
                     timelineChart.data.labels = [];
                     timelineChart.data.datasets[0].data = [];
-                    timelineChart.data.datasets[1].data = [];
                     timelineChart.update();
                     distributionChart.data.labels = [];
                     distributionChart.data.datasets[0].data = [];
-                    distributionChart.data.datasets[1].data = [];
                     distributionChart.update();
                     
                     // Reset demographics display

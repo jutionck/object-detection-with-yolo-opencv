@@ -2,3 +2,4 @@ venv/
 .claude/
 CLAUDE.md
 *.json
+AGENTS.md

@@ -5,33 +5,28 @@ import json
 import time
 import threading
 from datetime import datetime
-from ultralytics import YOLO
 import base64
 import numpy as np
 from collections import deque
 import sys
-from frontal_detector import FrontalPersonDetector
+from face_detector import FaceDetector
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'your-secret-key'
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-model = YOLO("yolov8n.pt")
-
 # Initialize with fast mode for web dashboard (webcam focused)
-frontal_detector = FrontalPersonDetector(performance_mode='fast')
+face_detector = FaceDetector(performance_mode='fast')
 
 class DetectionSystem:
     def __init__(self):
         self.is_running = False
         self.cap = None
         self.detection_data = []
-        self.person_counts = deque(maxlen=100)
-        self.frontal_person_counts = deque(maxlen=100)
+        self.face_counts = deque(maxlen=100)
         self.start_time = None
         self.frame_count = 0
-        self.total_persons = 0
-        self.total_frontal_persons = 0
+        self.total_faces = 0
         self.current_stats = {}
         self.demographics_history = []
         self.gender_stats = {'Male': 0, 'Female': 0, 'Unknown': 0}
@@ -65,11 +60,9 @@ class DetectionSystem:
         self.is_running = True
         self.start_time = time.time()
         self.frame_count = 0
-        self.total_persons = 0
-        self.total_frontal_persons = 0
+        self.total_faces = 0
         self.detection_data = []
-        self.person_counts = deque(maxlen=100)
-        self.frontal_person_counts = deque(maxlen=100)
+        self.face_counts = deque(maxlen=100)
         self.demographics_history = []
         self.gender_stats = {'Male': 0, 'Female': 0, 'Unknown': 0}
         self.age_stats = {'child': 0, 'young': 0, 'adult': 0, 'senior': 0}
@@ -96,43 +89,34 @@ class DetectionSystem:
             current_time = time.time()
             
             frame = cv2.resize(frame, (1280, 720))
-            results = model(frame)
             
-            # Get visible face person detections
-            frontal_persons, all_persons, frontal_results = frontal_detector.filter_frontal_persons(frame, results)
+            # Detect faces directly
+            faces = face_detector.detect_faces(frame)
             
-            # Create annotated frame with visible face indicators
-            annotated_frame = frontal_detector.annotate_frontal_persons(frame, all_persons, frontal_results)
+            # Create annotated frame with face indicators
+            annotated_frame = face_detector.annotate_faces(frame, faces)
             
-            people_count = len(all_persons)
-            visible_face_count = len(frontal_persons)
+            face_count = len(faces)
             
-            persons_detected = []
-            visible_face_persons_detected = []
+            faces_detected = []
             
-            # Process all persons
-            for person in all_persons:
-                persons_detected.append({
-                    'confidence': float(person['confidence']),
-                    'bbox': [float(x) for x in person['bbox']]
-                })
-            
-            # Process persons with visible faces and collect demographics
+            # Process faces and collect demographics
             current_frame_demographics = []
-            for person in frontal_persons:
-                person_data = {
-                    'confidence': float(person['confidence']),
-                    'bbox': [float(x) for x in person['bbox']],
-                    'face_info': person.get('face_info', {})
+            for face in faces:
+                face_data = {
+                    'quality': float(face['quality']),
+                    'bbox': [float(x) for x in face['bbox']],
+                    'type': face['type'],
+                    'area': int(face['area'])
                 }
                 
                 # Add demographics if available
-                if 'demographics' in person:
-                    person_data['demographics'] = person['demographics']
-                    current_frame_demographics.append(person['demographics'])
+                if 'demographics' in face:
+                    face_data['demographics'] = face['demographics']
+                    current_frame_demographics.append(face['demographics'])
                     
                     # Update statistics
-                    demo = person['demographics']
+                    demo = face['demographics']
                     if demo.get('gender') in self.gender_stats:
                         self.gender_stats[demo['gender']] += 1
                     else:
@@ -149,47 +133,37 @@ class DetectionSystem:
                     elif '60-100' in age_group:
                         self.age_stats['senior'] += 1
                 
-                visible_face_persons_detected.append(person_data)
+                faces_detected.append(face_data)
             
             # Store demographics for this frame
             if current_frame_demographics:
                 self.demographics_history.extend(current_frame_demographics)
             
-            self.total_persons += people_count
-            self.total_frontal_persons += visible_face_count
-            self.person_counts.append(people_count)
-            self.frontal_person_counts.append(visible_face_count)
+            self.total_faces += face_count
+            self.face_counts.append(face_count)
             
             detection_record = {
                 'timestamp': datetime.now().isoformat(),
                 'frame': self.frame_count,
-                'person_count': people_count,
-                'frontal_person_count': visible_face_count,
-                'persons': persons_detected,
-                'frontal_persons': visible_face_persons_detected,
+                'face_count': face_count,
+                'faces': faces_detected,
                 'elapsed_time': current_time - self.start_time
             }
             self.detection_data.append(detection_record)
             
             elapsed_time = current_time - self.start_time
             fps = self.frame_count / elapsed_time if elapsed_time > 0 else 0
-            avg_persons = self.total_persons / self.frame_count if self.frame_count > 0 else 0
-            avg_visible_face_persons = self.total_frontal_persons / self.frame_count if self.frame_count > 0 else 0
+            avg_faces = self.total_faces / self.frame_count if self.frame_count > 0 else 0
             
             self.current_stats = {
                 'frame_count': self.frame_count,
-                'person_count': people_count,
-                'frontal_person_count': visible_face_count,
-                'total_persons': self.total_persons,
-                'total_frontal_persons': self.total_frontal_persons,
-                'avg_persons': round(avg_persons, 2),
-                'avg_frontal_persons': round(avg_visible_face_persons, 2),
+                'face_count': face_count,
+                'total_faces': self.total_faces,
+                'avg_faces': round(avg_faces, 2),
                 'fps': round(fps, 2),
                 'elapsed_time': round(elapsed_time, 2),
-                'max_persons': max(self.person_counts) if self.person_counts else 0,
-                'min_persons': min(self.person_counts) if self.person_counts else 0,
-                'max_frontal_persons': max(self.frontal_person_counts) if self.frontal_person_counts else 0,
-                'min_frontal_persons': min(self.frontal_person_counts) if self.frontal_person_counts else 0
+                'max_faces': max(self.face_counts) if self.face_counts else 0,
+                'min_faces': min(self.face_counts) if self.face_counts else 0
             }
             
             _, buffer = cv2.imencode('.jpg', annotated_frame)
@@ -229,14 +203,10 @@ class DetectionSystem:
                 'total_frames': self.frame_count,
                 'duration_seconds': round(total_duration, 2),
                 'average_fps': round(self.frame_count/total_duration, 2),
-                'total_persons_detected': self.total_persons,
-                'total_frontal_persons_detected': self.total_frontal_persons,
-                'average_persons_per_frame': round(self.total_persons/self.frame_count, 2),
-                'average_frontal_persons_per_frame': round(self.total_frontal_persons/self.frame_count, 2),
-                'max_persons_in_frame': max(self.person_counts) if self.person_counts else 0,
-                'min_persons_in_frame': min(self.person_counts) if self.person_counts else 0,
-                'max_frontal_persons_in_frame': max(self.frontal_person_counts) if self.frontal_person_counts else 0,
-                'min_frontal_persons_in_frame': min(self.frontal_person_counts) if self.frontal_person_counts else 0,
+                'total_faces_detected': self.total_faces,
+                'average_faces_per_frame': round(self.total_faces/self.frame_count, 2),
+                'max_faces_in_frame': max(self.face_counts) if self.face_counts else 0,
+                'min_faces_in_frame': min(self.face_counts) if self.face_counts else 0,
                 'demographics': {
                     'total_analyzed': total_demographics,
                     'gender_distribution': self.gender_stats,

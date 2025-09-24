@@ -219,6 +219,47 @@ class GenderAgeDetector:
                 'face_count': len(visible_faces)
             }
     
+    def analyze_face_demographics(self, frame, face_bbox):
+        """
+        Analyze demographics for a single face
+        
+        Args:
+            frame: Input frame
+            face_bbox: Face bounding box [x, y, w, h]
+            
+        Returns:
+            dict: Demographics information
+        """
+        try:
+            x, y, w, h = face_bbox
+            
+            # Extract face ROI
+            face_roi = frame[y:y+h, x:x+w]
+            
+            if face_roi.size == 0:
+                return {
+                    'gender': 'Unknown',
+                    'age_group': 'Unknown',
+                    'confidence': {'gender': 0.0, 'age': 0.0}
+                }
+            
+            # Detect gender and age
+            gender, age_group, confidence = self.detect_gender_age(face_roi)
+            
+            return {
+                'gender': gender,
+                'age_group': age_group,
+                'confidence': confidence
+            }
+            
+        except Exception as e:
+            print(f"Error analyzing face demographics: {e}")
+            return {
+                'gender': 'Unknown',
+                'age_group': 'Unknown',
+                'confidence': {'gender': 0.0, 'age': 0.0}
+            }
+    
     def get_demographics_summary(self, demographics_list):
         """
         Get summary statistics for demographics
